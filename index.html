@@ -80,7 +80,7 @@
         // ----------------------------------------------------
         // เปลี่ยนลิงก์นี้เป็น URL Web App ใหม่ของคุณ
         // ----------------------------------------------------
-        const GOOGLE_APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxVTW_NnHbLupUfJOz304LHU1o3WmJXevoAk7Xl6zmLHsgWMbkTuoePZjPDQ6C_DCBg/exec';
+        const GOOGLE_APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyw2_hkox5zRvg1__EPqkm_NIYLldASm4644XtsMnWVswEUwE0_pUJphjwUsmCF9vpo/exec';
         
         const DEFAULT_GAME_DATA = {
             quiz: [
@@ -325,8 +325,7 @@
     </script>
 
     <!-- 1. หน้า Login -->
-    <div id="view-login" class="min-h-screen flex items-center justify-center p-4 relative z-10"> 
-        <div> version10 </div> 
+    <div id="view-login" class="min-h-screen flex items-center justify-center p-4 relative z-10">
         <div class="glass rounded-3xl p-8 max-w-5xl w-full flex flex-col md:flex-row gap-10 items-center shadow-2xl relative border-2 border-white">
             <button onclick="showView('view-admin')" class="absolute top-4 right-6 text-blue-700 text-sm font-bold bg-white px-4 py-2 rounded-full shadow-sm hover:bg-blue-50 transition"><i class="fas fa-cogs mr-1"></i> ผู้ดูแลระบบ</button>
             <div class="flex-1 text-center md:text-left flex flex-col items-center md:items-start">
@@ -722,8 +721,8 @@
             if(sec === 'lesson-3') renderGame3();
             if(sec === 'lesson-4') renderGame4();
             if(sec === 'lesson-5') document.getElementById('sec-l5').classList.remove('hidden'); 
-            if(sec === 'dashboard') renderDashboard();
-            if(sec === 'home') updateLeaderboardUI();
+            if(sec === 'dashboard') { renderDashboard(); fetchServerData(); }
+            if(sec === 'home') { updateLeaderboardUI(); fetchServerData(); }
             
             let targetSec = document.getElementById('sec-' + (sec.replace('lesson-','l')));
             if(targetSec) targetSec.classList.remove('hidden');
@@ -1232,6 +1231,11 @@
             
             // 1. Save locally first (Fallback)
             leaderboardDB.push(record); allStudentData.push(record);
+            
+            // ผสานข้อมูลเพื่อไม่ให้ซ้ำซ้อนใน Local
+            let merged = getMergedStudentData(allStudentData);
+            leaderboardDB = merged; 
+            allStudentData = merged;
             localStorage.setItem('elearning_db', JSON.stringify(leaderboardDB));
             
             // 2. Try to sync to Server
@@ -1240,10 +1244,11 @@
                 redirect: 'follow', // Ensures it follows GAS redirects
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
                 body: JSON.stringify({ action: 'save', cls: record.room, roll: record.number, ...record }) 
-            }).then(() => {
+            }).then(response => response.json())
+              .then(data => {
                 finalizeQuizState(isPostTest);
             }).catch(e => {
-                console.log('Offline save completed.');
+                console.log('Offline/CORS save completed.', e);
                 finalizeQuizState(isPostTest);
             });
         }
@@ -1442,20 +1447,29 @@
             }
 
             try {
-                // Use a timestamp param to break cache
-                const response = await fetch(GOOGLE_APP_SCRIPT_URL + "?action=get_data&t=" + new Date().getTime());
+                // Use a timestamp param to break cache & force fresh data
+                const response = await fetch(GOOGLE_APP_SCRIPT_URL + "?action=get_data&t=" + new Date().getTime(), {
+                    method: 'GET',
+                    redirect: 'follow'
+                });
                 const result = await response.json();
+                
                 if (result.status === 'success') {
-                    if (result.data && result.data.length > 0) {
-                        allStudentData = result.data;
-                        leaderboardDB = result.data;
+                    if (result.data) {
+                        // MERGE: นำข้อมูลจากเซิร์ฟเวอร์มารวมกับในเครื่อง แล้วกรองตัวซ้ำออก
+                        let mergedData = getMergedStudentData([...allStudentData, ...result.data]);
+                        allStudentData = mergedData;
+                        leaderboardDB = mergedData;
                         localStorage.setItem('elearning_db', JSON.stringify(leaderboardDB));
+                        
                         updateLeaderboardUI();
                         if(document.getElementById('admin-students') && !document.getElementById('admin-students').classList.contains('hidden')) renderAdminTable();
                     }
                     if (result.config) Object.assign(gameData, result.config);
                 }
-            } catch (error) { console.warn('Offline mode: Using local cached data.'); }
+            } catch (error) { 
+                console.warn('Offline mode: Using local cached data.', error); 
+            }
         }
 
         window.onload = () => { fetchServerData(); };
