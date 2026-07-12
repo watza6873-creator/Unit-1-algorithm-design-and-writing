@@ -216,6 +216,7 @@
         }
     </script>
 
+    <!-- Modal ใบความรู้ -->
     <div id="knowledge-modal" class="fixed inset-0 bg-black bg-opacity-60 z-[100] hidden flex items-center justify-center p-4 backdrop-blur-sm transition-opacity">
         <div class="bg-white w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             <div id="km-header" class="p-4 md:p-6 text-white font-black text-2xl flex justify-between items-center">
@@ -223,6 +224,7 @@
                 <button onclick="closeKnowledge()" class="hover:text-gray-200 transition bg-black bg-opacity-20 w-10 h-10 rounded-full"><i class="fas fa-times"></i></button>
             </div>
             <div class="p-6 md:p-8 overflow-y-auto flex-1 bg-gray-50 text-gray-800 text-lg leading-relaxed" id="km-body">
+                <!-- Content injected here -->
             </div>
         </div>
     </div>
@@ -453,7 +455,7 @@
                             </div>
                             <div class="overflow-x-auto rounded-xl border border-gray-100 shadow-sm">
                                 <table class="w-full text-left border-collapse min-w-[500px]">
-                                    <thead class="bg-blue-50 border-b-2 border-blue-200 text-blue-900"><tr><th class="p-4 text-center font-bold">อันดับ</th><th class="p-4 font-bold">ชื่อ-นามสกุล</th><th class="p-4 text-center font-bold">ห้อง</th><th class="p-4 text-center font-bold">เลขที่</th><th class="p-4 text-center font-bold">คะแนนรวม</th></tr></thead>
+                                    <thead class="bg-blue-50 border-b-2 border-blue-200 text-blue-900"><tr><th class="p-4 text-center font-bold">อันดับ</th><th class="p-4 font-bold">ชื่อ-นามสกุล</th><th class="p-4 text-center font-bold">ห้อง</th><th class="p-4 text-center font-bold">เลขที่</th><th class="p-4 text-center font-bold">ก่อนเรียน</th><th class="p-4 text-center font-bold">หลังเรียน</th></tr></thead>
                                     <tbody id="leaderboard-body" class="divide-y divide-gray-100 font-medium"></tbody>
                                 </table>
                             </div>
@@ -1214,6 +1216,44 @@
                 saveAndFinish(false);
             }
         }
+
+        // --- Robust Save System ---
+        function saveAndFinish(isPostTest) {
+            Swal.fire({title: 'กำลังบันทึกข้อมูล...', allowOutsideClick: false, didOpen: () => Swal.showLoading()});
+            
+            let timeUsedSeconds = Math.floor((Date.now() - appState.startTime) / 1000);
+            const record = { 
+                timestamp: new Date().toISOString(), 
+                name: appState.user.name, room: appState.user.class, number: appState.user.roll, 
+                preTestScore: appState.progress.preScore, postTestScore: appState.progress.postScore,
+                timeUsed: timeUsedSeconds 
+            };
+            
+            // 1. Save locally first (Fallback)
+            leaderboardDB.push(record); allStudentData.push(record);
+            localStorage.setItem('elearning_db', JSON.stringify(leaderboardDB));
+            
+            // 2. Try to sync to Server
+            fetch(GOOGLE_APP_SCRIPT_URL, { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+                body: JSON.stringify({ action: 'save', cls: record.room, roll: record.number, ...record }) 
+            }).then(() => {
+                finalizeQuizState(isPostTest);
+            }).catch(e => {
+                console.log('Offline save completed.');
+                finalizeQuizState(isPostTest);
+            });
+        }
+
+        function finalizeQuizState(isPostTest) {
+            Swal.close();
+            if(isPostTest) {
+                renderSidebar(); navigate('dashboard');
+            } else {
+                Swal.fire({title: 'สำเร็จ!', text: `คะแนนก่อนเรียน ${appState.progress.preScore}/10 ลุยด่านแรกได้เลย!`, icon: 'success'}).then(()=> { renderSidebar(); navigate('lesson-1'); });
+            }
+        }
     </script>
 
     <script>
@@ -1247,6 +1287,7 @@
             const element = document.getElementById('cert-container');
             
             Swal.fire({title: 'กำลังสร้างไฟล์ PDF...', allowOutsideClick: false, didOpen: () => Swal.showLoading()});
+            
             html2pdf().set({
                 margin: 0, filename: `รายงานผล_${appState.user.name}.pdf`, image: { type: 'jpeg', quality: 0.95 },
                 html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'px', format: [1123, 794], orientation: 'landscape' }
@@ -1256,62 +1297,60 @@
             });
         }
 
-        // --- Robust Save System (Ensuring data is pushed before next step) ---
-        async function saveAndFinish(isPostTest) {
-            Swal.fire({ title: 'กำลังบันทึกคะแนน...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-            
-            const record = { 
-                timestamp: new Date().toISOString(), 
-                name: appState.user.name, 
-                room: appState.user.class, 
-                number: appState.user.roll, 
-                preTestScore: appState.progress.preScore, 
-                postTestScore: appState.progress.postScore 
-            };
-            
-            // 1. ดันเข้า local array ก่อนเผื่อเน็ตพัง ก็ยังเห็นข้อมูลชั่วคราว
-            leaderboardDB.push(record); 
-            updateLeaderboardUI(); 
+        // Helper to group data by unique student (Name + Room + Roll)
+        function getMergedStudentData(dataArray) {
+            let mergedMap = {};
+            dataArray.forEach(r => {
+                let key = `${r.room}_${r.number}_${r.name}`;
+                if (!mergedMap[key]) {
+                    mergedMap[key] = { ...r };
+                } else {
+                    let curPost = parseInt(mergedMap[key].postTestScore); let newPost = parseInt(r.postTestScore);
+                    if (!isNaN(newPost)) { if (isNaN(curPost) || newPost > curPost) mergedMap[key].postTestScore = newPost; }
+                    
+                    let curPre = parseInt(mergedMap[key].preTestScore); let newPre = parseInt(r.preTestScore);
+                    if (!isNaN(newPre)) { if (isNaN(curPre) || newPre > curPre) mergedMap[key].preTestScore = newPre; }
 
-            // 2. ส่งไป Server
-            try {
-                await fetch(GOOGLE_APP_SCRIPT_URL, { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
-                    body: JSON.stringify({ action: 'save', cls: record.room, roll: record.number, ...record }) 
-                });
-            } catch(e) {
-                console.warn('Network issue during save, but local state preserved.', e);
-            }
-
-            Swal.close();
-
-            // 3. ไปหน้าถัดไป
-            if(isPostTest) {
-                renderSidebar(); navigate('dashboard');
-            } else {
-                Swal.fire({title: 'สำเร็จ!', text: `คะแนนก่อนเรียน ${appState.quizScore}/10 ลุยด่านแรกได้เลย!`, icon: 'success'}).then(()=> { renderSidebar(); navigate('lesson-1'); });
-            }
+                    if (r.timeUsed) { if (!mergedMap[key].timeUsed || r.timeUsed < mergedMap[key].timeUsed) mergedMap[key].timeUsed = r.timeUsed; }
+                }
+            });
+            return Object.values(mergedMap);
         }
 
         function updateLeaderboardUI() {
             const term = document.getElementById('leaderboard-search') ? document.getElementById('leaderboard-search').value.toLowerCase() : '';
-            // กรองเอาเฉพาะคนที่มีคะแนน PostTest แล้วเอามาจัดอันดับ
-            let validRecords = leaderboardDB.filter(u => u.postTestScore !== undefined && u.postTestScore !== null && u.postTestScore !== "");
-            let sorted = [...validRecords].sort((a,b) => parseInt(b.postTestScore) - parseInt(a.postTestScore));
+            
+            // Merge and sort
+            let mergedData = getMergedStudentData(leaderboardDB);
+            let validRecords = mergedData.filter(u => u.postTestScore !== undefined && u.postTestScore !== null && u.postTestScore !== "");
+            
+            let sorted = validRecords.sort((a,b) => {
+                let scoreDiff = parseInt(b.postTestScore) - parseInt(a.postTestScore);
+                if(scoreDiff !== 0) return scoreDiff;
+                return parseInt(a.timeUsed || 99999) - parseInt(b.timeUsed || 99999);
+            });
             
             let html = sorted.filter(u => ((u.name || "").toLowerCase().includes(term) || (u.room || "").toLowerCase().includes(term))).map((u, i) => {
                 let isMe = u.name === appState.user.name && u.room === appState.user.class;
                 let bg = isMe ? "bg-yellow-100 border-l-4 border-yellow-500" : "";
                 let icon = i===0 ? '<i class="fas fa-medal text-yellow-500 text-2xl"></i>' : (i===1 ? '<i class="fas fa-medal text-gray-400 text-xl"></i>' : (i===2 ? '<i class="fas fa-medal text-orange-600 text-xl"></i>' : i+1));
-                return `<tr class="${bg} border-b border-gray-100"><td class="p-3 text-center">${icon}</td><td class="p-3 font-bold">${u.name} ${isMe?'<span class="text-[10px] bg-yellow-500 text-white px-2 rounded-full ml-2">คุณ</span>':''}</td><td class="p-3 text-center">${u.room}</td><td class="p-3 text-center">${u.number}</td><td class="p-3 text-center font-black text-blue-600 text-xl">${u.postTestScore}</td></tr>`;
+                let timeText = u.timeUsed ? `<br><span class="text-[10px] text-gray-400 font-normal">⏱️ ${Math.floor(u.timeUsed/60)}น. ${u.timeUsed%60}วิ.</span>` : '';
+
+                return `<tr class="${bg} border-b border-gray-100">
+                    <td class="p-3 text-center">${icon}</td>
+                    <td class="p-3 font-bold">${u.name} ${isMe?'<span class="text-[10px] bg-yellow-500 text-white px-2 rounded-full ml-2">คุณ</span>':''}</td>
+                    <td class="p-3 text-center">${u.room}</td>
+                    <td class="p-3 text-center">${u.number}</td>
+                    <td class="p-3 text-center font-bold text-gray-500">${u.preTestScore || '-'}</td>
+                    <td class="p-3 text-center font-black text-green-600 text-xl">${u.postTestScore}${timeText}</td>
+                </tr>`;
             }).join('');
             
             const tbody = document.getElementById('leaderboard-body');
-            if(tbody) tbody.innerHTML = html || '<tr><td colspan="5" class="p-6 text-center text-gray-500">ไม่มีข้อมูล หรือยังไม่มีใครทำทดสอบหลังเรียนเสร็จ</td></tr>';
+            if(tbody) tbody.innerHTML = html || '<tr><td colspan="6" class="p-6 text-center text-gray-500">ยังไม่มีผู้รอดชีวิตที่ทำภารกิจสำเร็จ</td></tr>';
         }
 
-        // --- ระบบ Admin ---
+        // --- Admin System ---
         function checkAdmin() {
             if(document.getElementById('admin-user').value === 'Admin1234' && document.getElementById('admin-pass').value === 'KK222') {
                 playSFX('correct'); document.getElementById('admin-login-box').classList.add('hidden'); document.getElementById('admin-dashboard').classList.remove('hidden'); document.getElementById('admin-dashboard').classList.add('flex');
@@ -1343,39 +1382,67 @@
 
         function renderAdminTable() {
             let filter = document.getElementById('admin-filter').value;
-            let data = filter === 'all' ? allStudentData : allStudentData.filter(s => s.room === filter);
+            let mergedData = getMergedStudentData(allStudentData);
+            let data = filter === 'all' ? mergedData : mergedData.filter(s => s.room === filter);
+            
             data.sort((a,b) => parseInt(a.number||0) - parseInt(b.number||0));
+            
             document.getElementById('admin-table-body').innerHTML = data.map(u => {
                 let d = "N/A"; try{ d = new Date(u.timestamp).toLocaleString('th-TH'); }catch(e){}
-                return `<tr class="hover:bg-gray-100"><td class="p-3 text-xs text-gray-500">${d}</td><td class="p-3 font-bold">${u.room}</td><td class="p-3 text-center">${u.number}</td><td class="p-3">${u.name}</td><td class="p-3 text-center">${u.preTestScore||'-'}</td><td class="p-3 text-center font-bold text-green-600">${u.postTestScore||'-'}</td><td class="p-3 text-center"><button onclick="deleteRecord('${u.name}','${u.room}','${u.number}')" class="bg-red-100 text-red-600 hover:bg-red-500 hover:text-white px-3 py-1 rounded font-bold border border-red-300">ลบ</button></td></tr>`;
+                let timeText = u.timeUsed ? `${Math.floor(u.timeUsed/60)}m ${u.timeUsed%60}s` : '-';
+                return `<tr class="hover:bg-gray-100">
+                    <td class="p-3 text-xs text-gray-500">${d}<br>⏱️ ${timeText}</td>
+                    <td class="p-3 font-bold">${u.room}</td>
+                    <td class="p-3 text-center">${u.number}</td>
+                    <td class="p-3">${u.name}</td>
+                    <td class="p-3 text-center font-bold text-gray-500">${u.preTestScore||'-'}</td>
+                    <td class="p-3 text-center font-bold text-green-600">${u.postTestScore||'-'}</td>
+                    <td class="p-3 text-center"><button onclick="deleteRecord('${u.name}','${u.room}','${u.number}')" class="bg-red-100 text-red-600 hover:bg-red-500 hover:text-white px-3 py-1 rounded font-bold border border-red-300">ลบ</button></td>
+                </tr>`;
             }).join('');
         }
         
         async function deleteRecord(name, room, number) {
             if(confirm(`ลบข้อมูลของ ${name} ใช่หรือไม่?`)) {
                 try {
+                    leaderboardDB = leaderboardDB.filter(u => !(u.name === name && u.room === room && u.number == number));
+                    allStudentData = allStudentData.filter(u => !(u.name === name && u.room === room && u.number == number));
+                    localStorage.setItem('elearning_db', JSON.stringify(leaderboardDB));
+                    renderAdminTable(); updateLeaderboardUI();
+                    
                     const res = await fetch(GOOGLE_APP_SCRIPT_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'delete_record', name: name, cls: room, roll: number }) });
                     const json = await res.json();
-                    if (json.status === 'success') { Swal.fire('สำเร็จ', 'ลบแล้ว', 'success'); fetchServerData(); }
-                } catch(e) { alert('Error'); }
+                    if (json.status === 'success') { Swal.fire('สำเร็จ', 'ลบจากฐานข้อมูลแล้ว', 'success'); }
+                } catch(e) { console.error('Delete error', e); }
             }
         }
 
         async function fetchServerData() {
+            let localData = localStorage.getItem('elearning_db');
+            if(localData) {
+                try { 
+                    leaderboardDB = JSON.parse(localData); 
+                    allStudentData = [...leaderboardDB];
+                    updateLeaderboardUI(); 
+                } catch(e) {}
+            }
+
             try {
                 const response = await fetch(GOOGLE_APP_SCRIPT_URL);
                 const result = await response.json();
                 if (result.status === 'success') {
-                    if (result.data) {
+                    if (result.data && result.data.length > 0) {
                         allStudentData = result.data;
                         leaderboardDB = result.data;
+                        localStorage.setItem('elearning_db', JSON.stringify(leaderboardDB));
                         updateLeaderboardUI();
                         if(document.getElementById('admin-students') && !document.getElementById('admin-students').classList.contains('hidden')) renderAdminTable();
                     }
                     if (result.config) Object.assign(gameData, result.config);
                 }
-            } catch (error) { console.warn('Offline mode or Fetch Error.'); }
+            } catch (error) { console.warn('Offline mode: Using local cached data.'); }
         }
+
         window.onload = () => { fetchServerData(); };
     </script>
 </body>
