@@ -5,11 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>บทเรียนออนไลน์ วิทยาการคำนวณ ม.1</title>
     
-    <!-- Fonts & Icons -->
-    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- Tailwind & Utilities -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -79,9 +77,11 @@
 <body class="text-gray-800">
 
     <script>
-        const GOOGLE_APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxhI4JfH5gdr77emKwua7dRgtMatuJkKQnmp_YMpoSlZPrTvILpTl6O9WK_nDQO6e1v/exec';
+        // ----------------------------------------------------
+        // เปลี่ยนลิงก์นี้เป็น URL Web App ใหม่ของคุณ
+        // ----------------------------------------------------
+        const GOOGLE_APP_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxVTW_NnHbLupUfJOz304LHU1o3WmJXevoAk7Xl6zmLHsgWMbkTuoePZjPDQ6C_DCBg/exec';
         
-        // Expanded Game Data (30% more content, L2 no numbers, L5 exactly 10 questions with hints)
         const DEFAULT_GAME_DATA = {
             quiz: [
                 { q: "การคิดเชิงนามธรรม (Abstract Thinking) มีจุดประสงค์หลักเพื่ออะไร?", options: ["หารายละเอียดที่มากที่สุด", "หาแนวคิดรวบยอดและตัดรายละเอียดที่ไม่จำเป็นออก", "วาดแผนผังการทำงาน", "เขียนโปรแกรมคอมพิวเตอร์"], a: 1 },
@@ -153,7 +153,7 @@
         };
         let leaderboardDB = [];
         let allStudentData = [];
-        let quizTimer = null; // FIXED: Global timer for Quiz
+        let quizTimer = null; 
 
         // Audio System
         let audioCtx, isBgmOn = true, isSfxOn = true, bgmInterval, noteIdx = 0;
@@ -1235,7 +1235,8 @@
             
             // 2. Try to sync to Server
             fetch(GOOGLE_APP_SCRIPT_URL, { 
-                method: 'POST', 
+                method: 'POST',
+                redirect: 'follow', // Ensures it follows GAS redirects
                 headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
                 body: JSON.stringify({ action: 'save', cls: record.room, roll: record.number, ...record }) 
             }).then(() => {
@@ -1374,10 +1375,15 @@
                 let sec = document.getElementById('admin-json-select').value;
                 gameData[sec] = JSON.parse(document.getElementById('admin-json').value);
                 Swal.fire({ title: 'กำลังอัปเดต...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-                const res = await fetch(GOOGLE_APP_SCRIPT_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'save_config', configData: gameData }) });
+                const res = await fetch(GOOGLE_APP_SCRIPT_URL, { 
+                    method: 'POST', 
+                    redirect: 'follow',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+                    body: JSON.stringify({ action: 'save_config', configData: gameData }) 
+                });
                 const result = await res.json();
                 if (result.status === 'success') Swal.fire('สำเร็จ', 'อัปเดตโจทย์เกมขึ้นเซิร์ฟเวอร์เรียบร้อย!', 'success');
-            } catch(e) { Swal.fire('ผิดพลาด', 'รูปแบบ JSON ไม่ถูกต้อง กรุณาตรวจสอบปีกกา', 'error'); }
+            } catch(e) { Swal.fire('ผิดพลาด', 'รูปแบบ JSON ไม่ถูกต้อง หรือเซิร์ฟเวอร์ไม่ตอบสนอง', 'error'); }
         }
 
         function renderAdminTable() {
@@ -1405,12 +1411,19 @@
         async function deleteRecord(name, room, number) {
             if(confirm(`ลบข้อมูลของ ${name} ใช่หรือไม่?`)) {
                 try {
+                    // Update Local
                     leaderboardDB = leaderboardDB.filter(u => !(u.name === name && u.room === room && u.number == number));
                     allStudentData = allStudentData.filter(u => !(u.name === name && u.room === room && u.number == number));
                     localStorage.setItem('elearning_db', JSON.stringify(leaderboardDB));
                     renderAdminTable(); updateLeaderboardUI();
                     
-                    const res = await fetch(GOOGLE_APP_SCRIPT_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'delete_record', name: name, cls: room, roll: number }) });
+                    // Update Server
+                    const res = await fetch(GOOGLE_APP_SCRIPT_URL, { 
+                        method: 'POST', 
+                        redirect: 'follow',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, 
+                        body: JSON.stringify({ action: 'delete_record', name: name, cls: room, roll: number }) 
+                    });
                     const json = await res.json();
                     if (json.status === 'success') { Swal.fire('สำเร็จ', 'ลบจากฐานข้อมูลแล้ว', 'success'); }
                 } catch(e) { console.error('Delete error', e); }
@@ -1428,7 +1441,8 @@
             }
 
             try {
-                const response = await fetch(GOOGLE_APP_SCRIPT_URL);
+                // Use a timestamp param to break cache
+                const response = await fetch(GOOGLE_APP_SCRIPT_URL + "?action=get_data&t=" + new Date().getTime());
                 const result = await response.json();
                 if (result.status === 'success') {
                     if (result.data && result.data.length > 0) {
